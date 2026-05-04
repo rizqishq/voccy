@@ -1,0 +1,398 @@
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
+
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	writeSuccess(w, http.StatusOK, "service is healthy", nil)
+}
+
+func createBoardHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Settings    *struct {
+			AllowAnonymous    *bool   `json:"allow_anonymous"`
+			RequireEmail      *bool   `json:"require_email"`
+			MaxFeedbackLength *int    `json:"max_feedback_length"`
+			VotingEnabled     *bool   `json:"voting_enabled"`
+			Moderation        *string `json:"moderation"`
+		} `json:"settings"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	if len(req.Name) > 50 {
+		writeError(w, http.StatusBadRequest, "name must be 50 characters or less")
+		return
+	}
+
+	settings := BoardSettings{
+		AllowAnonymous:    true,
+		RequireEmail:      false,
+		MaxFeedbackLength: 2000,
+		VotingEnabled:     true,
+		Moderation:        "none",
+	}
+
+	if req.Settings != nil {
+		if req.Settings.AllowAnonymous != nil {
+			settings.AllowAnonymous = *req.Settings.AllowAnonymous
+		}
+		if req.Settings.RequireEmail != nil {
+			settings.RequireEmail = *req.Settings.RequireEmail
+		}
+		if req.Settings.MaxFeedbackLength != nil {
+			settings.MaxFeedbackLength = *req.Settings.MaxFeedbackLength
+		}
+		if req.Settings.VotingEnabled != nil {
+			settings.VotingEnabled = *req.Settings.VotingEnabled
+		}
+		if req.Settings.Moderation != nil {
+			settings.Moderation = *req.Settings.Moderation
+		}
+	}
+
+	board := Board{
+		ID:          uuid.New(),
+		Name:        req.Name,
+		Slug:        generateSlug(req.Name),
+		Description: req.Description,
+		IsActive:    true,
+		Settings:    settings,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	if err := createBoard(r.Context(), board); err != nil {
+		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique") {
+			writeError(w, http.StatusConflict, "board with this name already exists")
+			return
+		}
+		log.Printf("ERROR: failed to create board: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to create board")
+		return
+	}
+
+	writeSuccess(w, http.StatusCreated, "board created successfully", board)
+}
+
+func listBoardsHandler(w http.ResponseWriter, r *http.Request) {
+	boards, err := getBoards(r.Context())
+	if err != nil {
+		log.Printf("ERROR: failed to fetch boards: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch boards")
+		return
+	}
+
+	writeSuccess(w, http.StatusOK, "boards retrieved successfully", boards)
+}
+
+func getBoardByIDHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid board id")
+		return
+	}
+
+	board, err := getBoardByID(r.Context(), id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "board not found")
+			return
+		}
+		log.Printf("ERROR: failed to get board: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to get board")
+		return
+	}
+
+	writeSuccess(w, http.StatusOK, "board retrieved successfully", board)
+}
+
+func updateBoardHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid board id")
+		return
+	}
+
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Settings    *struct {
+			AllowAnonymous    *bool   `json:"allow_anonymous"`
+			RequireEmail      *bool   `json:"require_email"`
+			MaxFeedbackLength *int    `json:"max_feedback_length"`
+			VotingEnabled     *bool   `json:"voting_enabled"`
+			Moderation        *string `json:"moderation"`
+		} `json:"settings"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	if len(req.Name) > 50 {
+		writeError(w, http.StatusBadRequest, "name must be 50 characters or less")
+		return
+	}
+
+	// Get existing board to merge settings
+	existing, err := getBoardByID(r.Context(), id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "board not found")
+			return
+		}
+		log.Printf("ERROR: failed to get board: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to get board")
+		return
+	}
+
+	settings := existing.Settings
+	if req.Settings != nil {
+		if req.Settings.AllowAnonymous != nil {
+			settings.AllowAnonymous = *req.Settings.AllowAnonymous
+		}
+		if req.Settings.RequireEmail != nil {
+			settings.RequireEmail = *req.Settings.RequireEmail
+		}
+		if req.Settings.MaxFeedbackLength != nil {
+			settings.MaxFeedbackLength = *req.Settings.MaxFeedbackLength
+		}
+		if req.Settings.VotingEnabled != nil {
+			settings.VotingEnabled = *req.Settings.VotingEnabled
+		}
+		if req.Settings.Moderation != nil {
+			settings.Moderation = *req.Settings.Moderation
+		}
+	}
+
+	board, err := updateBoard(r.Context(), id, req.Name, req.Description, settings)
+	if err != nil {
+		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique") {
+			writeError(w, http.StatusConflict, "board with this name already exists")
+			return
+		}
+		log.Printf("ERROR: failed to update board: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to update board")
+		return
+	}
+
+	writeSuccess(w, http.StatusOK, "board updated successfully", board)
+}
+
+func deleteBoardHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid board id")
+		return
+	}
+
+	err = deleteBoard(r.Context(), id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "board not found")
+			return
+		}
+		log.Printf("ERROR: failed to delete board: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to delete board")
+		return
+	}
+
+	writeSuccess(w, http.StatusOK, "board deleted successfully", nil)
+}
+
+// Feedback handlers
+
+func createFeedbackHandler(w http.ResponseWriter, r *http.Request) {
+	boardID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid board id")
+		return
+	}
+
+	// Verify board exists
+	_, err = getBoardByID(r.Context(), boardID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "board not found")
+			return
+		}
+		log.Printf("ERROR: failed to verify board: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to verify board")
+		return
+	}
+
+	var req struct {
+		Title       string `json:"title"`
+		Body        string `json:"body"`
+		AuthorName  string `json:"author_name"`
+		AuthorEmail string `json:"author_email"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	if req.Title == "" {
+		writeError(w, http.StatusBadRequest, "title is required")
+		return
+	}
+
+	if req.Body == "" {
+		writeError(w, http.StatusBadRequest, "body is required")
+		return
+	}
+
+	feedback := Feedback{
+		ID:          uuid.New(),
+		BoardID:     boardID,
+		Title:       req.Title,
+		Body:        req.Body,
+		AuthorName:  req.AuthorName,
+		AuthorEmail: req.AuthorEmail,
+		Status:      "open",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	if err := createFeedback(r.Context(), feedback); err != nil {
+		log.Printf("ERROR: failed to create feedback: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to create feedback")
+		return
+	}
+
+	writeSuccess(w, http.StatusCreated, "feedback created successfully", feedback)
+}
+
+func listFeedbacksHandler(w http.ResponseWriter, r *http.Request) {
+	boardID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid board id")
+		return
+	}
+
+	// Verify board exists
+	_, err = getBoardByID(r.Context(), boardID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "board not found")
+			return
+		}
+		log.Printf("ERROR: failed to verify board: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to verify board")
+		return
+	}
+
+	feedbacks, err := getFeedbacksByBoardID(r.Context(), boardID)
+	if err != nil {
+		log.Printf("ERROR: failed to fetch feedbacks: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch feedbacks")
+		return
+	}
+
+	writeSuccess(w, http.StatusOK, "feedbacks retrieved successfully", feedbacks)
+}
+
+func getFeedbackByIDHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "feedbackId"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid feedback id")
+		return
+	}
+
+	feedback, err := getFeedbackByID(r.Context(), id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "feedback not found")
+			return
+		}
+		log.Printf("ERROR: failed to get feedback: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to get feedback")
+		return
+	}
+
+	writeSuccess(w, http.StatusOK, "feedback retrieved successfully", feedback)
+}
+
+func updateFeedbackStatusHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "feedbackId"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid feedback id")
+		return
+	}
+
+	var req struct {
+		Status string `json:"status"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	validStatuses := map[string]bool{"open": true, "in_progress": true, "resolved": true, "closed": true}
+	if !validStatuses[req.Status] {
+		writeError(w, http.StatusBadRequest, "invalid status, must be: open, in_progress, resolved, or closed")
+		return
+	}
+
+	feedback, err := updateFeedbackStatus(r.Context(), id, req.Status)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "feedback not found")
+			return
+		}
+		log.Printf("ERROR: failed to update feedback: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to update feedback")
+		return
+	}
+
+	writeSuccess(w, http.StatusOK, "feedback updated successfully", feedback)
+}
+
+func deleteFeedbackHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "feedbackId"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid feedback id")
+		return
+	}
+
+	err = deleteFeedback(r.Context(), id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "feedback not found")
+			return
+		}
+		log.Printf("ERROR: failed to delete feedback: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to delete feedback")
+		return
+	}
+
+	writeSuccess(w, http.StatusOK, "feedback deleted successfully", nil)
+}
