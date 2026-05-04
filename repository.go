@@ -2,22 +2,16 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
 func createBoard(ctx context.Context, board Board) error {
-	settingsJSON, err := json.Marshal(board.Settings)
-	if err != nil {
-		return err
-	}
-
-	_, err = pool.Exec(ctx,
+	_, err := pool.Exec(ctx,
 		`insert into boards (id, name, slug, description, is_active, settings, created_at, updated_at)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		board.ID, board.Name, board.Slug, board.Description, board.IsActive, settingsJSON, board.CreatedAt, board.UpdatedAt,
+		board.ID, board.Name, board.Slug, board.Description, board.IsActive, board.Settings, board.CreatedAt, board.UpdatedAt,
 	)
 	return err
 }
@@ -64,11 +58,6 @@ func getBoardByID(ctx context.Context, id uuid.UUID) (*Board, error) {
 }
 
 func updateBoard(ctx context.Context, id uuid.UUID, name, description string, settings BoardSettings) (*Board, error) {
-	settingsJSON, err := json.Marshal(settings)
-	if err != nil {
-		return nil, err
-	}
-
 	slug := generateSlug(name)
 
 	var b Board
@@ -76,7 +65,7 @@ func updateBoard(ctx context.Context, id uuid.UUID, name, description string, se
 		`update boards set name=$1, slug=$2, description=$3, settings=$4, updated_at=now()
 		 where id=$5
 		 returning id, name, slug, description, is_active, settings, created_at, updated_at`,
-		name, slug, description, settingsJSON, id,
+		name, slug, description, settings, id,
 	)
 
 	if err := row.Scan(&b.ID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt); err != nil {
