@@ -26,7 +26,7 @@ func getBoards(ctx context.Context) ([]Board, error) {
 
 	defer rows.Close()
 
-	var boards []Board
+	boards := []Board{}
 	for rows.Next() {
 		var b Board
 		err := rows.Scan(&b.ID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt)
@@ -108,7 +108,7 @@ func getFeedbacksByBoardID(ctx context.Context, boardID uuid.UUID) ([]Feedback, 
 	}
 	defer rows.Close()
 
-	var feedbacks []Feedback
+	feedbacks := []Feedback{}
 	for rows.Next() {
 		var f Feedback
 		err := rows.Scan(&f.ID, &f.BoardID, &f.Title, &f.Body, &f.AuthorName, &f.AuthorEmail, &f.Status, &f.CreatedAt, &f.UpdatedAt)

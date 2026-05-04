@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -83,7 +84,7 @@ func createBoardHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := createBoard(r.Context(), board); err != nil {
 		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique") {
-			writeError(w, http.StatusConflict, "board with this name already exists")
+			writeError(w, http.StatusConflict, "board with a similar name already exists")
 			return
 		}
 		log.Printf("ERROR: failed to create board: %v", err)
@@ -114,7 +115,7 @@ func getBoardByIDHandler(w http.ResponseWriter, r *http.Request) {
 
 	board, err := getBoardByID(r.Context(), id)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "board not found")
 			return
 		}
@@ -163,7 +164,7 @@ func updateBoardHandler(w http.ResponseWriter, r *http.Request) {
 	// Get existing board to merge settings
 	existing, err := getBoardByID(r.Context(), id)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "board not found")
 			return
 		}
@@ -194,7 +195,7 @@ func updateBoardHandler(w http.ResponseWriter, r *http.Request) {
 	board, err := updateBoard(r.Context(), id, req.Name, req.Description, settings)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique") {
-			writeError(w, http.StatusConflict, "board with this name already exists")
+			writeError(w, http.StatusConflict, "board with a similar name already exists")
 			return
 		}
 		log.Printf("ERROR: failed to update board: %v", err)
@@ -214,7 +215,7 @@ func deleteBoardHandler(w http.ResponseWriter, r *http.Request) {
 
 	err = deleteBoard(r.Context(), id)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "board not found")
 			return
 		}
@@ -238,7 +239,7 @@ func createFeedbackHandler(w http.ResponseWriter, r *http.Request) {
 	// Verify board exists
 	_, err = getBoardByID(r.Context(), boardID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "board not found")
 			return
 		}
@@ -300,7 +301,7 @@ func listFeedbacksHandler(w http.ResponseWriter, r *http.Request) {
 	// Verify board exists
 	_, err = getBoardByID(r.Context(), boardID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "board not found")
 			return
 		}
@@ -328,7 +329,7 @@ func getFeedbackByIDHandler(w http.ResponseWriter, r *http.Request) {
 
 	feedback, err := getFeedbackByID(r.Context(), id)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "feedback not found")
 			return
 		}
@@ -364,7 +365,7 @@ func updateFeedbackStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 	feedback, err := updateFeedbackStatus(r.Context(), id, req.Status)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "feedback not found")
 			return
 		}
@@ -385,7 +386,7 @@ func deleteFeedbackHandler(w http.ResponseWriter, r *http.Request) {
 
 	err = deleteFeedback(r.Context(), id)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "feedback not found")
 			return
 		}

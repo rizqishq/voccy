@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strings"
 )
 
@@ -27,8 +28,14 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	})
 }
 
+var nonAlphanumeric = regexp.MustCompile(`[^a-z0-9-]+`)
+var multiDash = regexp.MustCompile(`-{2,}`)
+
 func generateSlug(name string) string {
 	slug := strings.ToLower(name)
 	slug = strings.ReplaceAll(slug, " ", "-")
+	slug = nonAlphanumeric.ReplaceAllString(slug, "")
+	slug = multiDash.ReplaceAllString(slug, "-")
+	slug = strings.Trim(slug, "-")
 	return slug
 }
