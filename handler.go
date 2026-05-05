@@ -161,7 +161,6 @@ func updateBoardHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get existing board to merge settings
 	existing, err := getBoardByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -227,8 +226,6 @@ func deleteBoardHandler(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, http.StatusOK, "board deleted successfully", nil)
 }
 
-// Feedback handlers
-
 func createFeedbackHandler(w http.ResponseWriter, r *http.Request) {
 	boardID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -236,7 +233,6 @@ func createFeedbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify board exists
 	_, err = getBoardByID(r.Context(), boardID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -298,7 +294,6 @@ func listFeedbacksHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify board exists
 	_, err = getBoardByID(r.Context(), boardID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

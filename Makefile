@@ -3,7 +3,7 @@ include .env
 APP_NAME = voccy
 BIN_DIR = bin
 
-.PHONY: build run clean psql migrateup migratedown
+.PHONY: build run clean test psql migrateup migratedown
 
 build:
 	@echo "Building program...."
@@ -12,6 +12,10 @@ build:
 run: build
 	@echo "Running program...."
 	@./$(BIN_DIR)/$(APP_NAME)
+
+test:
+	@echo "Running tests...."
+	@TEST_DB_URL=$(TEST_DB_URL) go test ./... -v
 
 clean:
 	@echo "Cleaning program"
