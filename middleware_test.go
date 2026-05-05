@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestRateLimiter_AllowsUnderLimit(t *testing.T) {
@@ -198,5 +201,87 @@ func TestCORSMiddleware_Headers(t *testing.T) {
 
 	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Errorf("expected Allow-Origin '*', got '%s'", rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestAuthMiddleware_NoHeader(t *testing.T) {
+	os.Setenv("JWT_SECRET", "test-secret")
+	defer os.Unsetenv("JWT_SECRET")
+
+	handler := AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestAuthMiddleware_InvalidFormat(t *testing.T) {
+	os.Setenv("JWT_SECRET", "test-secret")
+	defer os.Unsetenv("JWT_SECRET")
+
+	handler := AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "NotBearer some-token")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestAuthMiddleware_InvalidToken(t *testing.T) {
+	os.Setenv("JWT_SECRET", "test-secret")
+	defer os.Unsetenv("JWT_SECRET")
+
+	handler := AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer invalid-token-string")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestAuthMiddleware_ValidToken(t *testing.T) {
+	os.Setenv("JWT_SECRET", "test-secret")
+	defer os.Unsetenv("JWT_SECRET")
+
+	orgID := uuid.New()
+	token, err := GenerateAccessToken(orgID)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	var capturedOrgID uuid.UUID
+	handler := AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedOrgID = GetOrgIDFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+	if capturedOrgID != orgID {
+		t.Errorf("expected orgID %s, got %s", orgID, capturedOrgID)
 	}
 }

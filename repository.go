@@ -167,3 +167,26 @@ func deleteFeedback(ctx context.Context, id uuid.UUID) error {
 
 	return nil
 }
+
+func createOrg(ctx context.Context, org Organization) error {
+	_, err := pool.Exec(ctx,
+		`INSERT INTO organizations (id, name, email, password_hash, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		org.ID, org.Name, org.Email, org.PasswordHash, org.CreatedAt, org.UpdatedAt,
+	)
+	return err
+}
+
+func getOrgByEmail(ctx context.Context, email string) (*Organization, error) {
+	var org Organization
+	row := pool.QueryRow(ctx,
+		`SELECT id, name, email, password_hash, created_at, updated_at FROM organizations WHERE email=$1`,
+		email,
+	)
+
+	if err := row.Scan(&org.ID, &org.Name, &org.Email, &org.PasswordHash, &org.CreatedAt, &org.UpdatedAt); err != nil {
+		return nil, err
+	}
+
+	return &org, nil
+}

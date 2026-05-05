@@ -8,15 +8,52 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/cors"
+	"github.com/google/uuid"
 )
 
 type contextKey string
 
-const ctxFingerprint contextKey = "fingerprint"
+const (
+	ctxFingerprint contextKey = "fingerprint"
+	ctxOrgID       contextKey = "orgID"
+)
+
+func AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		if tokenString == authHeader {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		claims, err := ValidateToken(tokenString)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), ctxOrgID, claims.OrgID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func GetOrgIDFromContext(ctx context.Context) uuid.UUID {
+	if orgID, ok := ctx.Value(ctxOrgID).(uuid.UUID); ok {
+		return orgID
+	}
+	return uuid.Nil
+}
 
 func CORSMiddleware() func(http.Handler) http.Handler {
 	return cors.Handler(cors.Options{

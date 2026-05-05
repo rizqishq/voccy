@@ -40,17 +40,26 @@ func main() {
 
 	r.Get("/health", healthHandler)
 
-	r.Get("/boards", listBoardsHandler)
-	r.Post("/boards", createBoardHandler)
-	r.Get("/boards/{id}", getBoardByIDHandler)
-	r.Put("/boards/{id}", updateBoardHandler)
-	r.Delete("/boards/{id}", deleteBoardHandler)
+	r.Post("/auth/register", registerHandler)
+	r.Post("/auth/login", loginHandler)
+	r.Post("/auth/refresh", refreshHandler)
+	r.Delete("/auth/logout", logoutHandler)
 
-	r.Get("/boards/{id}/feedbacks", listFeedbacksHandler)
-	r.Post("/boards/{id}/feedbacks", createFeedbackHandler)
-	r.Get("/boards/{id}/feedbacks/{feedbackId}", getFeedbackByIDHandler)
-	r.Patch("/boards/{id}/feedbacks/{feedbackId}", updateFeedbackStatusHandler)
-	r.Delete("/boards/{id}/feedbacks/{feedbackId}", deleteFeedbackHandler)
+	r.Group(func(r chi.Router) {
+		r.Use(AuthMiddleware)
+
+		r.Get("/boards", listBoardsHandler)
+		r.Post("/boards", createBoardHandler)
+		r.Get("/boards/{id}", getBoardByIDHandler)
+		r.Put("/boards/{id}", updateBoardHandler)
+		r.Delete("/boards/{id}", deleteBoardHandler)
+
+		r.Get("/boards/{id}/feedbacks", listFeedbacksHandler)
+		r.Post("/boards/{id}/feedbacks", createFeedbackHandler)
+		r.Get("/boards/{id}/feedbacks/{feedbackId}", getFeedbackByIDHandler)
+		r.Patch("/boards/{id}/feedbacks/{feedbackId}", updateFeedbackStatusHandler)
+		r.Delete("/boards/{id}/feedbacks/{feedbackId}", deleteFeedbackHandler)
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {
