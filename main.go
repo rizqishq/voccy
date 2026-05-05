@@ -5,6 +5,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
@@ -28,7 +31,12 @@ func main() {
 	log.Println("Database connected successfully")
 
 	r := chi.NewRouter()
+
+	r.Use(PanicRecovery)
+	r.Use(CORSMiddleware())
 	r.Use(middleware.Logger)
+	r.Use(FingerprintMiddleware)
+	r.Use(RateLimiter(60))
 
 	r.Get("/health", healthHandler)
 
@@ -44,6 +52,36 @@ func main() {
 	r.Patch("/boards/{id}/feedbacks/{feedbackId}", updateFeedbackStatusHandler)
 	r.Delete("/boards/{id}/feedbacks/{feedbackId}", deleteFeedbackHandler)
 
-	log.Println("Server started in port :6767")
-	log.Fatal(http.ListenAndServe(":6767", r))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "6767"
+	}
+
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: r,
+	}
+
+	go func() {
+		log.Printf("Server started on port :%s", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("ERROR: server failed: %s", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Shutting down server...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Fatalf("ERROR: server forced to shutdown: %s", err)
+	}
+
+	pool.Close()
+	log.Println("Server stopped")
 }
