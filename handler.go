@@ -73,6 +73,7 @@ func createBoardHandler(w http.ResponseWriter, r *http.Request) {
 
 	board := Board{
 		ID:          uuid.New(),
+		OrgID:       GetOrgIDFromContext(r.Context()),
 		Name:        req.Name,
 		Slug:        generateSlug(req.Name),
 		Description: req.Description,
@@ -161,7 +162,8 @@ func updateBoardHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := getBoardByID(r.Context(), id)
+	orgID := GetOrgIDFromContext(r.Context())
+	existing, err := getBoardByIDForOrg(r.Context(), id, orgID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "board not found")
@@ -191,7 +193,7 @@ func updateBoardHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	board, err := updateBoard(r.Context(), id, req.Name, req.Description, settings)
+	board, err := updateBoardForOrg(r.Context(), id, orgID, req.Name, req.Description, settings)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique") {
 			writeError(w, http.StatusConflict, "board with a similar name already exists")
@@ -212,7 +214,7 @@ func deleteBoardHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = deleteBoard(r.Context(), id)
+	err = deleteBoardForOrg(r.Context(), id, GetOrgIDFromContext(r.Context()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "board not found")

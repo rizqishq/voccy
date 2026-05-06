@@ -8,11 +8,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/joho/godotenv/autoload"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func setupTestDB(t *testing.T) {
@@ -32,12 +34,15 @@ func setupTestDB(t *testing.T) {
 	if err := pool.Ping(context.Background()); err != nil {
 		t.Fatalf("failed to ping test db: %v", err)
 	}
+
+	os.Setenv("JWT_SECRET", "test-secret")
 }
 
 func cleanupDB(t *testing.T) {
 	t.Helper()
 	pool.Exec(context.Background(), "DELETE FROM feedbacks")
 	pool.Exec(context.Background(), "DELETE FROM boards")
+	pool.Exec(context.Background(), "DELETE FROM organizations")
 }
 
 func newTestRouter() *chi.Mux {
@@ -45,17 +50,27 @@ func newTestRouter() *chi.Mux {
 
 	r.Get("/health", healthHandler)
 
-	r.Get("/boards", listBoardsHandler)
-	r.Post("/boards", createBoardHandler)
-	r.Get("/boards/{id}", getBoardByIDHandler)
-	r.Put("/boards/{id}", updateBoardHandler)
-	r.Delete("/boards/{id}", deleteBoardHandler)
+	r.Post("/auth/register", registerHandler)
+	r.Post("/auth/login", loginHandler)
+	r.Post("/auth/refresh", refreshHandler)
+	r.Delete("/auth/logout", logoutHandler)
 
+	r.Get("/boards", listBoardsHandler)
+	r.Get("/boards/{id}", getBoardByIDHandler)
 	r.Get("/boards/{id}/feedbacks", listFeedbacksHandler)
-	r.Post("/boards/{id}/feedbacks", createFeedbackHandler)
 	r.Get("/boards/{id}/feedbacks/{feedbackId}", getFeedbackByIDHandler)
-	r.Patch("/boards/{id}/feedbacks/{feedbackId}", updateFeedbackStatusHandler)
-	r.Delete("/boards/{id}/feedbacks/{feedbackId}", deleteFeedbackHandler)
+
+	r.Group(func(r chi.Router) {
+		r.Use(AuthMiddleware)
+
+		r.Post("/boards", createBoardHandler)
+		r.Put("/boards/{id}", updateBoardHandler)
+		r.Delete("/boards/{id}", deleteBoardHandler)
+
+		r.Post("/boards/{id}/feedbacks", createFeedbackHandler)
+		r.Patch("/boards/{id}/feedbacks/{feedbackId}", updateFeedbackStatusHandler)
+		r.Delete("/boards/{id}/feedbacks/{feedbackId}", deleteFeedbackHandler)
+	})
 
 	return r
 }
@@ -67,6 +82,41 @@ func parseResponse(t *testing.T, rec *httptest.ResponseRecorder) ResponsePayload
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	return resp
+}
+
+func createTestOrg(t *testing.T) (Organization, string) {
+	t.Helper()
+
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+
+	now := time.Now()
+	org := Organization{
+		ID:           uuid.New(),
+		Name:         "Test Org",
+		Email:        uuid.New().String()[:8] + "@example.com",
+		PasswordHash: string(passwordHash),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	if err := createOrg(context.Background(), org); err != nil {
+		t.Fatalf("failed to create test org: %v", err)
+	}
+
+	token, err := GenerateAccessToken(org.ID)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	return org, token
+}
+
+func authRequest(req *http.Request, token string) *http.Request {
+	req.Header.Set("Authorization", "Bearer "+token)
+	return req
 }
 
 func TestHealthHandler_Success(t *testing.T) {
@@ -93,10 +143,12 @@ func TestCreateBoard_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 	body := `{"name": "Test Board", "description": "A test board"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, req)
@@ -113,11 +165,11 @@ func TestCreateBoard_Success(t *testing.T) {
 		t.Fatal("expected data to be non-nil")
 	}
 }
-
 func TestCreateBoard_WithSettings(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 	body := `{
 		"name": "Board With Settings",
@@ -132,6 +184,7 @@ func TestCreateBoard_WithSettings(t *testing.T) {
 	}`
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, req)
@@ -167,15 +220,16 @@ func TestCreateBoard_WithSettings(t *testing.T) {
 		t.Errorf("expected moderation='pre', got %v", settings["moderation"])
 	}
 }
-
 func TestCreateBoard_InvalidJSON(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 	body := `{invalid json}`
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, req)
@@ -192,15 +246,16 @@ func TestCreateBoard_InvalidJSON(t *testing.T) {
 		t.Errorf("expected message 'invalid json', got '%s'", resp.Message)
 	}
 }
-
 func TestCreateBoard_MissingName(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 	body := `{"description": "no name provided"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, req)
@@ -214,16 +269,17 @@ func TestCreateBoard_MissingName(t *testing.T) {
 		t.Errorf("expected message 'name is required', got '%s'", resp.Message)
 	}
 }
-
 func TestCreateBoard_NameTooLong(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 	longName := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" // 51 chars
 	body := `{"name": "` + longName + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, req)
@@ -237,16 +293,17 @@ func TestCreateBoard_NameTooLong(t *testing.T) {
 		t.Errorf("expected message 'name must be 50 characters or less', got '%s'", resp.Message)
 	}
 }
-
 func TestCreateBoard_DuplicateName(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 	body := `{"name": "Duplicate Board"}`
 
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -256,6 +313,7 @@ func TestCreateBoard_DuplicateName(t *testing.T) {
 
 	req = httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -268,16 +326,17 @@ func TestCreateBoard_DuplicateName(t *testing.T) {
 		t.Errorf("expected conflict message, got '%s'", resp.Message)
 	}
 }
-
 func TestListBoards_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	body := `{"name": "List Test Board"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -302,7 +361,6 @@ func TestListBoards_Success(t *testing.T) {
 		t.Error("expected at least one board in list")
 	}
 }
-
 func TestListBoards_Empty(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
@@ -331,11 +389,13 @@ func TestGetBoardByID_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	body := `{"name": "Get By ID Board"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -364,7 +424,6 @@ func TestGetBoardByID_Success(t *testing.T) {
 		t.Errorf("expected slug 'get-by-id-board', got '%s'", boardData["slug"])
 	}
 }
-
 func TestGetBoardByID_InvalidID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
@@ -410,11 +469,13 @@ func TestUpdateBoard_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	body := `{"name": "Original Name", "description": "original"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -425,6 +486,7 @@ func TestUpdateBoard_Success(t *testing.T) {
 	updateBody := `{"name": "Updated Name", "description": "updated"}`
 	req = httptest.NewRequest(http.MethodPut, "/boards/"+boardID, bytes.NewBufferString(updateBody))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -444,16 +506,17 @@ func TestUpdateBoard_Success(t *testing.T) {
 		t.Errorf("expected description 'updated', got '%s'", boardData["description"])
 	}
 }
-
 func TestUpdateBoard_WithSettings(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	body := `{"name": "Settings Board"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -464,6 +527,7 @@ func TestUpdateBoard_WithSettings(t *testing.T) {
 	updateBody := `{"name": "Settings Board", "description": "", "settings": {"allow_anonymous": false}}`
 	req = httptest.NewRequest(http.MethodPut, "/boards/"+boardID, bytes.NewBufferString(updateBody))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -482,16 +546,17 @@ func TestUpdateBoard_WithSettings(t *testing.T) {
 		t.Errorf("expected voting_enabled=true (unchanged), got %v", settings["voting_enabled"])
 	}
 }
-
 func TestUpdateBoard_InvalidID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	body := `{"name": "Whatever"}`
 	req := httptest.NewRequest(http.MethodPut, "/boards/not-a-uuid", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -499,16 +564,17 @@ func TestUpdateBoard_InvalidID(t *testing.T) {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}
 }
-
 func TestUpdateBoard_InvalidJSON(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	fakeID := uuid.New().String()
 	req := httptest.NewRequest(http.MethodPut, "/boards/"+fakeID, bytes.NewBufferString(`{bad`))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -516,17 +582,18 @@ func TestUpdateBoard_InvalidJSON(t *testing.T) {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}
 }
-
 func TestUpdateBoard_MissingName(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	fakeID := uuid.New().String()
 	body := `{"description": "no name"}`
 	req := httptest.NewRequest(http.MethodPut, "/boards/"+fakeID, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -539,11 +606,11 @@ func TestUpdateBoard_MissingName(t *testing.T) {
 		t.Errorf("expected 'name is required', got '%s'", resp.Message)
 	}
 }
-
 func TestUpdateBoard_NameTooLong(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	fakeID := uuid.New().String()
@@ -551,6 +618,7 @@ func TestUpdateBoard_NameTooLong(t *testing.T) {
 	body := `{"name": "` + longName + `"}`
 	req := httptest.NewRequest(http.MethodPut, "/boards/"+fakeID, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -558,17 +626,18 @@ func TestUpdateBoard_NameTooLong(t *testing.T) {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}
 }
-
 func TestUpdateBoard_NotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	fakeID := uuid.New().String()
 	body := `{"name": "Nonexistent"}`
 	req := httptest.NewRequest(http.MethodPut, "/boards/"+fakeID, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -576,16 +645,17 @@ func TestUpdateBoard_NotFound(t *testing.T) {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
 }
-
 func TestDeleteBoard_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	body := `{"name": "Delete Me Board"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -594,6 +664,7 @@ func TestDeleteBoard_Success(t *testing.T) {
 	boardID := data["id"].(string)
 
 	req = httptest.NewRequest(http.MethodDelete, "/boards/"+boardID, nil)
+	req = authRequest(req, token)
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -609,14 +680,15 @@ func TestDeleteBoard_Success(t *testing.T) {
 		t.Errorf("expected status 404 after delete, got %d", rec.Code)
 	}
 }
-
 func TestDeleteBoard_InvalidID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodDelete, "/boards/not-a-uuid", nil)
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -624,15 +696,16 @@ func TestDeleteBoard_InvalidID(t *testing.T) {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}
 }
-
 func TestDeleteBoard_NotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	fakeID := uuid.New().String()
 	req := httptest.NewRequest(http.MethodDelete, "/boards/"+fakeID, nil)
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -641,11 +714,12 @@ func TestDeleteBoard_NotFound(t *testing.T) {
 	}
 }
 
-func createTestBoard(t *testing.T, r *chi.Mux) string {
+func createTestBoard(t *testing.T, r *chi.Mux, token string) string {
 	t.Helper()
 	body := `{"name": "Feedback Test Board ` + uuid.New().String()[:8] + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -657,17 +731,18 @@ func createTestBoard(t *testing.T, r *chi.Mux) string {
 	data := resp.Data.(map[string]interface{})
 	return data["id"].(string)
 }
-
 func TestCreateFeedback_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	body := `{"title": "Bug Report", "body": "Something is broken", "author_name": "John", "author_email": "john@example.com"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -691,16 +766,17 @@ func TestCreateFeedback_Success(t *testing.T) {
 		t.Errorf("expected board_id '%s', got '%s'", boardID, data["board_id"])
 	}
 }
-
 func TestCreateFeedback_InvalidBoardID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	body := `{"title": "Test", "body": "Test body"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards/not-a-uuid/feedbacks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -708,17 +784,18 @@ func TestCreateFeedback_InvalidBoardID(t *testing.T) {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}
 }
-
 func TestCreateFeedback_BoardNotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	fakeID := uuid.New().String()
 	body := `{"title": "Test", "body": "Test body"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards/"+fakeID+"/feedbacks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -726,16 +803,17 @@ func TestCreateFeedback_BoardNotFound(t *testing.T) {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
 }
-
 func TestCreateFeedback_InvalidJSON(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(`{bad`))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -743,17 +821,18 @@ func TestCreateFeedback_InvalidJSON(t *testing.T) {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}
 }
-
 func TestCreateFeedback_MissingTitle(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	body := `{"body": "No title here"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -766,17 +845,18 @@ func TestCreateFeedback_MissingTitle(t *testing.T) {
 		t.Errorf("expected 'title is required', got '%s'", resp.Message)
 	}
 }
-
 func TestCreateFeedback_MissingBody(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	body := `{"title": "Has title but no body"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -789,17 +869,18 @@ func TestCreateFeedback_MissingBody(t *testing.T) {
 		t.Errorf("expected 'body is required', got '%s'", resp.Message)
 	}
 }
-
 func TestListFeedbacks_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	body := `{"title": "Feedback 1", "body": "Body 1"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -820,7 +901,6 @@ func TestListFeedbacks_Success(t *testing.T) {
 		t.Errorf("expected 1 feedback, got %d", len(data))
 	}
 }
-
 func TestListFeedbacks_InvalidBoardID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
@@ -856,8 +936,9 @@ func TestListFeedbacks_Empty(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	req := httptest.NewRequest(http.MethodGet, "/boards/"+boardID+"/feedbacks", nil)
 	rec := httptest.NewRecorder()
@@ -876,17 +957,18 @@ func TestListFeedbacks_Empty(t *testing.T) {
 		t.Errorf("expected 0 feedbacks, got %d", len(data))
 	}
 }
-
 func TestGetFeedbackByID_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	body := `{"title": "Get Me", "body": "Find this feedback"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -908,13 +990,13 @@ func TestGetFeedbackByID_Success(t *testing.T) {
 		t.Errorf("expected title 'Get Me', got '%s'", feedbackData["title"])
 	}
 }
-
 func TestGetFeedbackByID_InvalidID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	req := httptest.NewRequest(http.MethodGet, "/boards/"+boardID+"/feedbacks/not-a-uuid", nil)
 	rec := httptest.NewRecorder()
@@ -924,13 +1006,13 @@ func TestGetFeedbackByID_InvalidID(t *testing.T) {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}
 }
-
 func TestGetFeedbackByID_NotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	fakeID := uuid.New().String()
 	req := httptest.NewRequest(http.MethodGet, "/boards/"+boardID+"/feedbacks/"+fakeID, nil)
@@ -941,17 +1023,18 @@ func TestGetFeedbackByID_NotFound(t *testing.T) {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
 }
-
 func TestUpdateFeedbackStatus_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	body := `{"title": "Status Test", "body": "Will change status"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -962,6 +1045,7 @@ func TestUpdateFeedbackStatus_Success(t *testing.T) {
 	updateBody := `{"status": "in_progress"}`
 	req = httptest.NewRequest(http.MethodPatch, "/boards/"+boardID+"/feedbacks/"+feedbackID, bytes.NewBufferString(updateBody))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -975,13 +1059,13 @@ func TestUpdateFeedbackStatus_Success(t *testing.T) {
 		t.Errorf("expected status 'in_progress', got '%s'", feedbackData["status"])
 	}
 }
-
 func TestUpdateFeedbackStatus_AllValidStatuses(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	statuses := []string{"open", "in_progress", "resolved", "closed"}
 
@@ -990,6 +1074,7 @@ func TestUpdateFeedbackStatus_AllValidStatuses(t *testing.T) {
 			body := `{"title": "Status ` + status + `", "body": "body"}`
 			req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(body))
 			req.Header.Set("Content-Type", "application/json")
+			req = authRequest(req, token)
 			rec := httptest.NewRecorder()
 			r.ServeHTTP(rec, req)
 
@@ -1000,6 +1085,7 @@ func TestUpdateFeedbackStatus_AllValidStatuses(t *testing.T) {
 			updateBody := `{"status": "` + status + `"}`
 			req = httptest.NewRequest(http.MethodPatch, "/boards/"+boardID+"/feedbacks/"+feedbackID, bytes.NewBufferString(updateBody))
 			req.Header.Set("Content-Type", "application/json")
+			req = authRequest(req, token)
 			rec = httptest.NewRecorder()
 			r.ServeHTTP(rec, req)
 
@@ -1015,17 +1101,18 @@ func TestUpdateFeedbackStatus_AllValidStatuses(t *testing.T) {
 		})
 	}
 }
-
 func TestUpdateFeedbackStatus_InvalidStatus(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	body := `{"title": "Invalid Status", "body": "body"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1036,6 +1123,7 @@ func TestUpdateFeedbackStatus_InvalidStatus(t *testing.T) {
 	updateBody := `{"status": "invalid_status"}`
 	req = httptest.NewRequest(http.MethodPatch, "/boards/"+boardID+"/feedbacks/"+feedbackID, bytes.NewBufferString(updateBody))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1048,17 +1136,18 @@ func TestUpdateFeedbackStatus_InvalidStatus(t *testing.T) {
 		t.Errorf("unexpected message: '%s'", resp.Message)
 	}
 }
-
 func TestUpdateFeedbackStatus_InvalidFeedbackID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	body := `{"status": "closed"}`
 	req := httptest.NewRequest(http.MethodPatch, "/boards/"+boardID+"/feedbacks/not-a-uuid", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1066,17 +1155,18 @@ func TestUpdateFeedbackStatus_InvalidFeedbackID(t *testing.T) {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}
 }
-
 func TestUpdateFeedbackStatus_InvalidJSON(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	fakeID := uuid.New().String()
 	req := httptest.NewRequest(http.MethodPatch, "/boards/"+boardID+"/feedbacks/"+fakeID, bytes.NewBufferString(`{bad`))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1084,18 +1174,19 @@ func TestUpdateFeedbackStatus_InvalidJSON(t *testing.T) {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}
 }
-
 func TestUpdateFeedbackStatus_NotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	fakeID := uuid.New().String()
 	body := `{"status": "closed"}`
 	req := httptest.NewRequest(http.MethodPatch, "/boards/"+boardID+"/feedbacks/"+fakeID, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1103,17 +1194,18 @@ func TestUpdateFeedbackStatus_NotFound(t *testing.T) {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
 }
-
 func TestDeleteFeedback_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	body := `{"title": "Delete Me", "body": "Will be deleted"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1122,6 +1214,7 @@ func TestDeleteFeedback_Success(t *testing.T) {
 	feedbackID := data["id"].(string)
 
 	req = httptest.NewRequest(http.MethodDelete, "/boards/"+boardID+"/feedbacks/"+feedbackID, nil)
+	req = authRequest(req, token)
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1137,15 +1230,16 @@ func TestDeleteFeedback_Success(t *testing.T) {
 		t.Errorf("expected status 404 after delete, got %d", rec.Code)
 	}
 }
-
 func TestDeleteFeedback_InvalidID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	req := httptest.NewRequest(http.MethodDelete, "/boards/"+boardID+"/feedbacks/not-a-uuid", nil)
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1153,16 +1247,17 @@ func TestDeleteFeedback_InvalidID(t *testing.T) {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}
 }
-
 func TestDeleteFeedback_NotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	fakeID := uuid.New().String()
 	req := httptest.NewRequest(http.MethodDelete, "/boards/"+boardID+"/feedbacks/"+fakeID, nil)
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1170,17 +1265,18 @@ func TestDeleteFeedback_NotFound(t *testing.T) {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
 }
-
 func TestDeleteBoard_CascadeDeletesFeedbacks(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	body := `{"title": "Cascade Test", "body": "Should be deleted with board"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1189,6 +1285,7 @@ func TestDeleteBoard_CascadeDeletesFeedbacks(t *testing.T) {
 	feedbackID := data["id"].(string)
 
 	req = httptest.NewRequest(http.MethodDelete, "/boards/"+boardID, nil)
+	req = authRequest(req, token)
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1204,15 +1301,16 @@ func TestDeleteBoard_CascadeDeletesFeedbacks(t *testing.T) {
 		t.Errorf("expected feedback to be deleted (404), got %d", rec.Code)
 	}
 }
-
 func TestCreateBoard_EmptyBody(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(""))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1220,17 +1318,18 @@ func TestCreateBoard_EmptyBody(t *testing.T) {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}
 }
-
 func TestCreateFeedback_WithoutAuthor(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
-	boardID := createTestBoard(t, r)
+	boardID := createTestBoard(t, r, token)
 
 	body := `{"title": "Anonymous Feedback", "body": "No author info"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1244,16 +1343,17 @@ func TestCreateFeedback_WithoutAuthor(t *testing.T) {
 		t.Errorf("expected empty author_name, got '%s'", data["author_name"])
 	}
 }
-
 func TestCreateBoard_SpecialCharactersInName(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupDB(t)
 
+	_, token := createTestOrg(t)
 	r := newTestRouter()
 
 	body := `{"name": "Hello World! @#$% Test"}`
 	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, token)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -1265,6 +1365,32 @@ func TestCreateBoard_SpecialCharactersInName(t *testing.T) {
 	data := resp.Data.(map[string]interface{})
 	if data["slug"] != "hello-world-test" {
 		t.Errorf("expected slug 'hello-world-test', got '%s'", data["slug"])
+	}
+}
+func TestProtectedEndpoint_NoToken(t *testing.T) {
+	r := newTestRouter()
+	body := `{"name": "Unauthorized Board"}`
+	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401, got %d", rec.Code)
+	}
+}
+
+func TestProtectedEndpoint_InvalidToken(t *testing.T) {
+	r := newTestRouter()
+	body := `{"name": "Unauthorized Board"}`
+	req := httptest.NewRequest(http.MethodPost, "/boards", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer invalid-token")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401, got %d", rec.Code)
 	}
 }
 

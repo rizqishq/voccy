@@ -9,16 +9,16 @@ import (
 
 func createBoard(ctx context.Context, board Board) error {
 	_, err := pool.Exec(ctx,
-		`insert into boards (id, name, slug, description, is_active, settings, created_at, updated_at)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		board.ID, board.Name, board.Slug, board.Description, board.IsActive, board.Settings, board.CreatedAt, board.UpdatedAt,
+		`insert into boards (id, org_id, name, slug, description, is_active, settings, created_at, updated_at)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		board.ID, board.OrgID, board.Name, board.Slug, board.Description, board.IsActive, board.Settings, board.CreatedAt, board.UpdatedAt,
 	)
 	return err
 }
 
 func getBoards(ctx context.Context) ([]Board, error) {
 	rows, err := pool.Query(ctx,
-		`select id, name, slug, description, is_active, settings, created_at, updated_at from boards`,
+		`select id, org_id, name, slug, description, is_active, settings, created_at, updated_at from boards`,
 	)
 	if err != nil {
 		return nil, err
@@ -29,7 +29,7 @@ func getBoards(ctx context.Context) ([]Board, error) {
 	boards := []Board{}
 	for rows.Next() {
 		var b Board
-		err := rows.Scan(&b.ID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt)
+		err := rows.Scan(&b.ID, &b.OrgID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -46,11 +46,11 @@ func getBoards(ctx context.Context) ([]Board, error) {
 func getBoardByID(ctx context.Context, id uuid.UUID) (*Board, error) {
 	var b Board
 	row := pool.QueryRow(ctx,
-		`select id, name, slug, description, is_active, settings, created_at, updated_at from boards where id=$1`,
+		`select id, org_id, name, slug, description, is_active, settings, created_at, updated_at from boards where id=$1`,
 		id,
 	)
 
-	if err := row.Scan(&b.ID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt); err != nil {
+	if err := row.Scan(&b.ID, &b.OrgID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
 
@@ -64,15 +64,60 @@ func updateBoard(ctx context.Context, id uuid.UUID, name, description string, se
 	row := pool.QueryRow(ctx,
 		`update boards set name=$1, slug=$2, description=$3, settings=$4, updated_at=now()
 		 where id=$5
-		 returning id, name, slug, description, is_active, settings, created_at, updated_at`,
+		 returning id, org_id, name, slug, description, is_active, settings, created_at, updated_at`,
 		name, slug, description, settings, id,
 	)
 
-	if err := row.Scan(&b.ID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt); err != nil {
+	if err := row.Scan(&b.ID, &b.OrgID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
 
 	return &b, nil
+}
+
+func getBoardByIDForOrg(ctx context.Context, id uuid.UUID, orgID uuid.UUID) (*Board, error) {
+	var b Board
+	row := pool.QueryRow(ctx,
+		`select id, org_id, name, slug, description, is_active, settings, created_at, updated_at from boards where id=$1 and org_id=$2`,
+		id, orgID,
+	)
+
+	if err := row.Scan(&b.ID, &b.OrgID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt); err != nil {
+		return nil, err
+	}
+
+	return &b, nil
+}
+
+func updateBoardForOrg(ctx context.Context, id uuid.UUID, orgID uuid.UUID, name, description string, settings BoardSettings) (*Board, error) {
+	slug := generateSlug(name)
+
+	var b Board
+	row := pool.QueryRow(ctx,
+		`update boards set name=$1, slug=$2, description=$3, settings=$4, updated_at=now()
+		 where id=$5 and org_id=$6
+		 returning id, org_id, name, slug, description, is_active, settings, created_at, updated_at`,
+		name, slug, description, settings, id, orgID,
+	)
+
+	if err := row.Scan(&b.ID, &b.OrgID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt); err != nil {
+		return nil, err
+	}
+
+	return &b, nil
+}
+
+func deleteBoardForOrg(ctx context.Context, id uuid.UUID, orgID uuid.UUID) error {
+	result, err := pool.Exec(ctx, `delete from boards where id=$1 and org_id=$2`, id, orgID)
+	if err != nil {
+		return err
+	}
+
+	if result.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+
+	return nil
 }
 
 func deleteBoard(ctx context.Context, id uuid.UUID) error {

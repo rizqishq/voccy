@@ -16,6 +16,14 @@
 		{
 			"key": "feedback_id",
 			"value": ""
+		},
+		{
+			"key": "access_token",
+			"value": ""
+		},
+		{
+			"key": "refresh_token",
+			"value": ""
 		}
 	],
 	"item": [
@@ -27,6 +35,86 @@
 					"request": {
 						"method": "GET",
 						"url": "{{base_url}}/health"
+					}
+				}
+			]
+		},
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Register",
+					"request": {
+						"method": "POST",
+						"url": "{{base_url}}/auth/register",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"name\": \"Demo Org\",\n    \"email\": \"demo@example.com\",\n    \"password\": \"password123\"\n}"
+						}
+					}
+				},
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.data && jsonData.data.access_token) {",
+									"    pm.collectionVariables.set('access_token', jsonData.data.access_token);",
+									"}",
+									"if (jsonData.data && jsonData.data.refresh_token) {",
+									"    pm.collectionVariables.set('refresh_token', jsonData.data.refresh_token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"url": "{{base_url}}/auth/login",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"demo@example.com\",\n    \"password\": \"password123\"\n}"
+						}
+					}
+				},
+				{
+					"name": "Refresh",
+					"request": {
+						"method": "POST",
+						"url": "{{base_url}}/auth/refresh",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"refresh_token\": \"{{refresh_token}}\"\n}"
+						}
+					}
+				},
+				{
+					"name": "Logout",
+					"request": {
+						"method": "DELETE",
+						"url": "{{base_url}}/auth/logout"
 					}
 				}
 			]
@@ -54,6 +142,10 @@
 						"method": "POST",
 						"url": "{{base_url}}/boards",
 						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							},
 							{
 								"key": "Content-Type",
 								"value": "application/json"
@@ -86,6 +178,10 @@
 						"url": "{{base_url}}/boards/{{board_id}}",
 						"header": [
 							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							},
+							{
 								"key": "Content-Type",
 								"value": "application/json"
 							}
@@ -100,7 +196,13 @@
 					"name": "Delete Board",
 					"request": {
 						"method": "DELETE",
-						"url": "{{base_url}}/boards/{{board_id}}"
+						"url": "{{base_url}}/boards/{{board_id}}",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						]
 					}
 				}
 			]
@@ -128,6 +230,10 @@
 						"method": "POST",
 						"url": "{{base_url}}/boards/{{board_id}}/feedbacks",
 						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							},
 							{
 								"key": "Content-Type",
 								"value": "application/json"
@@ -160,6 +266,10 @@
 						"url": "{{base_url}}/boards/{{board_id}}/feedbacks/{{feedback_id}}",
 						"header": [
 							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							},
+							{
 								"key": "Content-Type",
 								"value": "application/json"
 							}
@@ -174,7 +284,13 @@
 					"name": "Delete Feedback",
 					"request": {
 						"method": "DELETE",
-						"url": "{{base_url}}/boards/{{board_id}}/feedbacks/{{feedback_id}}"
+						"url": "{{base_url}}/boards/{{board_id}}/feedbacks/{{feedback_id}}",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						]
 					}
 				}
 			]

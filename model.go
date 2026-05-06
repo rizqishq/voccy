@@ -16,6 +16,7 @@ type BoardSettings struct {
 
 type Board struct {
 	ID          uuid.UUID     `json:"id"`
+	OrgID       uuid.UUID     `json:"org_id"`
 	Name        string        `json:"name"`
 	Slug        string        `json:"slug"`
 	Description string        `json:"description"`
