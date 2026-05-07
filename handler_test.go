@@ -360,6 +360,10 @@ func TestListBoards_Success(t *testing.T) {
 	if len(data) == 0 {
 		t.Error("expected at least one board in list")
 	}
+	boardData := data[0].(map[string]interface{})
+	if _, ok := boardData["org_id"]; ok {
+		t.Error("expected org_id to be omitted")
+	}
 }
 func TestListBoards_Empty(t *testing.T) {
 	setupTestDB(t)
@@ -417,6 +421,9 @@ func TestGetBoardByID_Success(t *testing.T) {
 	}
 
 	boardData := resp.Data.(map[string]interface{})
+	if _, ok := boardData["org_id"]; ok {
+		t.Error("expected org_id to be omitted")
+	}
 	if boardData["name"] != "Get By ID Board" {
 		t.Errorf("expected name 'Get By ID Board', got '%s'", boardData["name"])
 	}
@@ -1377,6 +1384,111 @@ func TestProtectedEndpoint_NoToken(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected status 401, got %d", rec.Code)
+	}
+}
+
+func TestProtectedEndpointGroups_NoToken(t *testing.T) {
+	r := newTestRouter()
+	boardID := uuid.New().String()
+	feedbackID := uuid.New().String()
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"update board", http.MethodPut, "/boards/" + boardID, `{"name": "Unauthorized Board"}`},
+		{"delete board", http.MethodDelete, "/boards/" + boardID, ""},
+		{"create feedback", http.MethodPost, "/boards/" + boardID + "/feedbacks", `{"title": "Unauthorized", "body": "body"}`},
+		{"update feedback", http.MethodPatch, "/boards/" + boardID + "/feedbacks/" + feedbackID, `{"status": "closed"}`},
+		{"delete feedback", http.MethodDelete, "/boards/" + boardID + "/feedbacks/" + feedbackID, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("expected status 401, got %d", rec.Code)
+			}
+		})
+	}
+}
+
+func TestOrgIsolation_BoardAndFeedbackWrites(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupDB(t)
+
+	_, tokenA := createTestOrg(t)
+	_, tokenB := createTestOrg(t)
+	r := newTestRouter()
+	boardID := createTestBoard(t, r, tokenA)
+
+	body := `{"title": "Org A Feedback", "body": "private to org a"}`
+	req := httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, tokenA)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("failed to create feedback: status %d", rec.Code)
+	}
+
+	resp := parseResponse(t, rec)
+	data := resp.Data.(map[string]interface{})
+	feedbackID := data["id"].(string)
+
+	req = httptest.NewRequest(http.MethodPut, "/boards/"+boardID, bytes.NewBufferString(`{"name": "Org B Update"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, tokenB)
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404 for cross-org board update, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/boards/"+boardID, nil)
+	req = authRequest(req, tokenB)
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404 for cross-org board delete, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/boards/"+boardID+"/feedbacks", bytes.NewBufferString(`{"title": "Org B Feedback", "body": "blocked"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, tokenB)
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404 for cross-org feedback create, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/boards/"+boardID+"/feedbacks/"+feedbackID, bytes.NewBufferString(`{"status": "closed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = authRequest(req, tokenB)
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404 for cross-org feedback update, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/boards/"+boardID+"/feedbacks/"+feedbackID, nil)
+	req = authRequest(req, tokenB)
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404 for cross-org feedback delete, got %d", rec.Code)
 	}
 }
 

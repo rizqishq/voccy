@@ -104,7 +104,7 @@ func listBoardsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeSuccess(w, http.StatusOK, "boards retrieved successfully", boards)
+	writeSuccess(w, http.StatusOK, "boards retrieved successfully", toPublicBoards(boards))
 }
 
 func getBoardByIDHandler(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +125,7 @@ func getBoardByIDHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeSuccess(w, http.StatusOK, "board retrieved successfully", board)
+	writeSuccess(w, http.StatusOK, "board retrieved successfully", toPublicBoard(*board))
 }
 
 func updateBoardHandler(w http.ResponseWriter, r *http.Request) {
@@ -235,7 +235,7 @@ func createFeedbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = getBoardByID(r.Context(), boardID)
+	_, err = getBoardByIDForOrg(r.Context(), boardID, GetOrgIDFromContext(r.Context()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "board not found")
@@ -360,7 +360,7 @@ func updateFeedbackStatusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	feedback, err := updateFeedbackStatus(r.Context(), id, req.Status)
+	feedback, err := updateFeedbackStatusForOrg(r.Context(), id, GetOrgIDFromContext(r.Context()), req.Status)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "feedback not found")
@@ -381,7 +381,7 @@ func deleteFeedbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = deleteFeedback(r.Context(), id)
+	err = deleteFeedbackForOrg(r.Context(), id, GetOrgIDFromContext(r.Context()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "feedback not found")

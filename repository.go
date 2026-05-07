@@ -57,24 +57,6 @@ func getBoardByID(ctx context.Context, id uuid.UUID) (*Board, error) {
 	return &b, nil
 }
 
-func updateBoard(ctx context.Context, id uuid.UUID, name, description string, settings BoardSettings) (*Board, error) {
-	slug := generateSlug(name)
-
-	var b Board
-	row := pool.QueryRow(ctx,
-		`update boards set name=$1, slug=$2, description=$3, settings=$4, updated_at=now()
-		 where id=$5
-		 returning id, org_id, name, slug, description, is_active, settings, created_at, updated_at`,
-		name, slug, description, settings, id,
-	)
-
-	if err := row.Scan(&b.ID, &b.OrgID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt); err != nil {
-		return nil, err
-	}
-
-	return &b, nil
-}
-
 func getBoardByIDForOrg(ctx context.Context, id uuid.UUID, orgID uuid.UUID) (*Board, error) {
 	var b Board
 	row := pool.QueryRow(ctx,
@@ -109,19 +91,6 @@ func updateBoardForOrg(ctx context.Context, id uuid.UUID, orgID uuid.UUID, name,
 
 func deleteBoardForOrg(ctx context.Context, id uuid.UUID, orgID uuid.UUID) error {
 	result, err := pool.Exec(ctx, `delete from boards where id=$1 and org_id=$2`, id, orgID)
-	if err != nil {
-		return err
-	}
-
-	if result.RowsAffected() == 0 {
-		return pgx.ErrNoRows
-	}
-
-	return nil
-}
-
-func deleteBoard(ctx context.Context, id uuid.UUID) error {
-	result, err := pool.Exec(ctx, `delete from boards where id=$1`, id)
 	if err != nil {
 		return err
 	}
@@ -185,12 +154,14 @@ func getFeedbackByID(ctx context.Context, id uuid.UUID) (*Feedback, error) {
 	return &f, nil
 }
 
-func updateFeedbackStatus(ctx context.Context, id uuid.UUID, status string) (*Feedback, error) {
+func updateFeedbackStatusForOrg(ctx context.Context, id uuid.UUID, orgID uuid.UUID, status string) (*Feedback, error) {
 	var f Feedback
 	row := pool.QueryRow(ctx,
-		`update feedbacks set status=$1, updated_at=now() where id=$2
-		 returning id, board_id, title, body, author_name, author_email, status, created_at, updated_at`,
-		status, id,
+		`update feedbacks f set status=$1, updated_at=now()
+		 from boards b
+		 where f.id=$2 and f.board_id=b.id and b.org_id=$3
+		 returning f.id, f.board_id, f.title, f.body, f.author_name, f.author_email, f.status, f.created_at, f.updated_at`,
+		status, id, orgID,
 	)
 
 	if err := row.Scan(&f.ID, &f.BoardID, &f.Title, &f.Body, &f.AuthorName, &f.AuthorEmail, &f.Status, &f.CreatedAt, &f.UpdatedAt); err != nil {
@@ -200,8 +171,13 @@ func updateFeedbackStatus(ctx context.Context, id uuid.UUID, status string) (*Fe
 	return &f, nil
 }
 
-func deleteFeedback(ctx context.Context, id uuid.UUID) error {
-	result, err := pool.Exec(ctx, `delete from feedbacks where id=$1`, id)
+func deleteFeedbackForOrg(ctx context.Context, id uuid.UUID, orgID uuid.UUID) error {
+	result, err := pool.Exec(ctx,
+		`delete from feedbacks f
+		 using boards b
+		 where f.id=$1 and f.board_id=b.id and b.org_id=$2`,
+		id, orgID,
+	)
 	if err != nil {
 		return err
 	}

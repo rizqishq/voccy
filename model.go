@@ -26,6 +26,38 @@ type Board struct {
 	UpdatedAt   time.Time     `json:"updated_at"`
 }
 
+type PublicBoard struct {
+	ID          uuid.UUID     `json:"id"`
+	Name        string        `json:"name"`
+	Slug        string        `json:"slug"`
+	Description string        `json:"description"`
+	IsActive    bool          `json:"is_active"`
+	Settings    BoardSettings `json:"settings"`
+	CreatedAt   time.Time     `json:"created_at"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+}
+
+func toPublicBoard(board Board) PublicBoard {
+	return PublicBoard{
+		ID:          board.ID,
+		Name:        board.Name,
+		Slug:        board.Slug,
+		Description: board.Description,
+		IsActive:    board.IsActive,
+		Settings:    board.Settings,
+		CreatedAt:   board.CreatedAt,
+		UpdatedAt:   board.UpdatedAt,
+	}
+}
+
+func toPublicBoards(boards []Board) []PublicBoard {
+	publicBoards := make([]PublicBoard, 0, len(boards))
+	for _, board := range boards {
+		publicBoards = append(publicBoards, toPublicBoard(board))
+	}
+	return publicBoards
+}
+
 type Feedback struct {
 	ID          uuid.UUID `json:"id"`
 	BoardID     uuid.UUID `json:"board_id"`
