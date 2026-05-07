@@ -69,8 +69,16 @@ type Feedback struct {
 	AuthorName  string    `json:"author_name"`
 	AuthorEmail string    `json:"author_email"`
 	Status      string    `json:"status"`
+	VoteCount   int       `json:"vote_count"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type Vote struct {
+	ID          uuid.UUID `json:"id"`
+	FeedbackID  uuid.UUID `json:"feedback_id"`
+	Fingerprint string    `json:"-"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type Organization struct {

@@ -52,7 +52,7 @@ func GenerateRefreshToken(orgID uuid.UUID) (string, error) {
 }
 
 func ValidateToken(tokenString string) (*TokenClaims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (any, error) {
 		return []byte(getJWTSecret()), nil
 	})
 	if err != nil {

@@ -49,15 +49,19 @@ func main() {
 	r.Get("/boards/{id}", getBoardByIDHandler)
 	r.Get("/boards/{id}/feedbacks", listFeedbacksHandler)
 	r.Get("/boards/{id}/feedbacks/{feedbackId}", getFeedbackByIDHandler)
+	r.Post("/boards/{id}/feedbacks", createFeedbackHandler)
+	r.Post("/b/{slug}/feedbacks/{id}/vote", voteHandler)
 
 	r.Group(func(r chi.Router) {
 		r.Use(AuthMiddleware)
+
+		r.Get("/org", getOrgHandler)
+		r.Patch("/org", updateOrgHandler)
 
 		r.Post("/boards", createBoardHandler)
 		r.Put("/boards/{id}", updateBoardHandler)
 		r.Delete("/boards/{id}", deleteBoardHandler)
 
-		r.Post("/boards/{id}/feedbacks", createFeedbackHandler)
 		r.Patch("/boards/{id}/feedbacks/{feedbackId}", updateFeedbackStatusHandler)
 		r.Delete("/boards/{id}/feedbacks/{feedbackId}", deleteFeedbackHandler)
 	})

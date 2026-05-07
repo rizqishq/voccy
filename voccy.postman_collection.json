@@ -24,6 +24,10 @@
 		{
 			"key": "refresh_token",
 			"value": ""
+		},
+		{
+			"key": "slug",
+			"value": ""
 		}
 	],
 	"item": [
@@ -120,6 +124,45 @@
 			]
 		},
 		{
+			"name": "Org",
+			"item": [
+				{
+					"name": "Get Org",
+					"request": {
+						"method": "GET",
+						"url": "{{base_url}}/org",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							}
+						]
+					}
+				},
+				{
+					"name": "Update Org",
+					"request": {
+						"method": "PATCH",
+						"url": "{{base_url}}/org",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"name\": \"Updated Org Name\",\n    \"email\": \"updated@example.com\"\n}"
+						}
+					}
+				}
+			]
+		},
+		{
 			"name": "Boards",
 			"item": [
 				{
@@ -132,6 +175,9 @@
 									"var jsonData = pm.response.json();",
 									"if (jsonData.data && jsonData.data.id) {",
 									"    pm.collectionVariables.set('board_id', jsonData.data.id);",
+									"}",
+									"if (jsonData.data && jsonData.data.slug) {",
+									"    pm.collectionVariables.set('slug', jsonData.data.slug);",
 									"}"
 								],
 								"type": "text/javascript"
@@ -153,7 +199,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Product Feedback\",\n    \"description\": \"Collect user feedback for our product\",\n    \"settings\": {\n        \"allow_anonymous\": true,\n        \"require_email\": false,\n        \"max_feedback_length\": 2000,\n        \"voting_enabled\": true,\n        \"moderation\": \"none\"\n    }\n}"
+							"raw": "{\n    \"name\": \"Feature Requests\",\n    \"description\": \"Submit your feature requests here\"\n}"
 						}
 					}
 				},
@@ -188,7 +234,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Product Feedback Updated\",\n    \"description\": \"Updated description\",\n    \"settings\": {\n        \"voting_enabled\": false,\n        \"moderation\": \"pre\"\n    }\n}"
+							"raw": "{\n    \"name\": \"Updated Board Name\",\n    \"description\": \"Updated description\"\n}"
 						}
 					}
 				},
@@ -230,10 +276,6 @@
 						"method": "POST",
 						"url": "{{base_url}}/boards/{{board_id}}/feedbacks",
 						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{access_token}}"
-							},
 							{
 								"key": "Content-Type",
 								"value": "application/json"
@@ -291,6 +333,18 @@
 								"value": "Bearer {{access_token}}"
 							}
 						]
+					}
+				}
+			]
+		},
+		{
+			"name": "Vote",
+			"item": [
+				{
+					"name": "Toggle Vote",
+					"request": {
+						"method": "POST",
+						"url": "{{base_url}}/b/{{slug}}/feedbacks/{{feedback_id}}/vote"
 					}
 				}
 			]

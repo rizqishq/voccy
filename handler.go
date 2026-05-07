@@ -235,7 +235,7 @@ func createFeedbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = getBoardByIDForOrg(r.Context(), boardID, GetOrgIDFromContext(r.Context()))
+	_, err = getBoardByID(r.Context(), boardID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "board not found")
@@ -411,4 +411,61 @@ func deleteFeedbackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeSuccess(w, http.StatusOK, "feedback deleted successfully", nil)
+}
+
+func getOrgHandler(w http.ResponseWriter, r *http.Request) {
+	orgID := GetOrgIDFromContext(r.Context())
+	org, err := getOrgByID(r.Context(), orgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "organization not found")
+			return
+		}
+		log.Printf("ERROR: failed to get organization: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to get organization")
+		return
+	}
+
+	writeSuccess(w, http.StatusOK, "organization retrieved successfully", org)
+}
+
+func updateOrgHandler(w http.ResponseWriter, r *http.Request) {
+	orgID := GetOrgIDFromContext(r.Context())
+
+	var req struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	if req.Email == "" {
+		writeError(w, http.StatusBadRequest, "email is required")
+		return
+	}
+
+	org, err := updateOrg(r.Context(), orgID, req.Name, req.Email)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "organization not found")
+			return
+		}
+		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+			writeError(w, http.StatusConflict, "email already in use")
+			return
+		}
+		log.Printf("ERROR: failed to update organization: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to update organization")
+		return
+	}
+
+	writeSuccess(w, http.StatusOK, "organization updated successfully", org)
 }

@@ -163,7 +163,7 @@ func TestWriteJSON_ValidJSON(t *testing.T) {
 
 	writeJSON(rec, 200, ResponsePayload{Status: "success", Message: "hello"})
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
 		t.Fatalf("response is not valid JSON: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestResponsePayload_OmitEmptyData(t *testing.T) {
 		t.Fatalf("failed to marshal: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	json.Unmarshal(b, &result)
 
 	if _, exists := result["data"]; exists {
@@ -208,7 +208,7 @@ func TestResponsePayload_IncludesData(t *testing.T) {
 		t.Fatalf("failed to marshal: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	json.Unmarshal(b, &result)
 
 	if _, exists := result["data"]; !exists {

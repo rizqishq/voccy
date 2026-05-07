@@ -160,7 +160,7 @@ func getClientIP(r *http.Request) string {
 
 func cleanupOldEntries() {
 	cutoff := time.Now().Add(-5 * time.Minute)
-	rateLimiterMap.Range(func(key, value interface{}) bool {
+	rateLimiterMap.Range(func(key, value any) bool {
 		entry := value.(*rateLimiterEntry)
 		entry.mu.Lock()
 		isEmpty := len(entry.timestamps) == 0 ||
