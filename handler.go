@@ -318,13 +318,19 @@ func listFeedbacksHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getFeedbackByIDHandler(w http.ResponseWriter, r *http.Request) {
+	boardID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid board id")
+		return
+	}
+
 	id, err := uuid.Parse(chi.URLParam(r, "feedbackId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid feedback id")
 		return
 	}
 
-	feedback, err := getFeedbackByID(r.Context(), id)
+	feedback, err := getFeedbackByID(r.Context(), id, boardID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "feedback not found")
@@ -339,6 +345,12 @@ func getFeedbackByIDHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func updateFeedbackStatusHandler(w http.ResponseWriter, r *http.Request) {
+	boardID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid board id")
+		return
+	}
+
 	id, err := uuid.Parse(chi.URLParam(r, "feedbackId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid feedback id")
@@ -360,7 +372,7 @@ func updateFeedbackStatusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	feedback, err := updateFeedbackStatusForOrg(r.Context(), id, GetOrgIDFromContext(r.Context()), req.Status)
+	feedback, err := updateFeedbackStatusForOrg(r.Context(), id, boardID, GetOrgIDFromContext(r.Context()), req.Status)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "feedback not found")
@@ -375,13 +387,19 @@ func updateFeedbackStatusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func deleteFeedbackHandler(w http.ResponseWriter, r *http.Request) {
+	boardID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid board id")
+		return
+	}
+
 	id, err := uuid.Parse(chi.URLParam(r, "feedbackId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid feedback id")
 		return
 	}
 
-	err = deleteFeedbackForOrg(r.Context(), id, GetOrgIDFromContext(r.Context()))
+	err = deleteFeedbackForOrg(r.Context(), id, boardID, GetOrgIDFromContext(r.Context()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "feedback not found")

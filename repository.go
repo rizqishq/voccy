@@ -18,7 +18,9 @@ func createBoard(ctx context.Context, board Board) error {
 
 func getBoards(ctx context.Context) ([]Board, error) {
 	rows, err := pool.Query(ctx,
-		`select id, org_id, name, slug, description, is_active, settings, created_at, updated_at from boards`,
+		`select b.id, b.org_id, o.name, b.name, b.slug, b.description, b.is_active, b.settings, b.created_at, b.updated_at
+		 from boards b
+		 join organizations o on o.id = b.org_id`,
 	)
 	if err != nil {
 		return nil, err
@@ -29,7 +31,7 @@ func getBoards(ctx context.Context) ([]Board, error) {
 	boards := []Board{}
 	for rows.Next() {
 		var b Board
-		err := rows.Scan(&b.ID, &b.OrgID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt)
+		err := rows.Scan(&b.ID, &b.OrgID, &b.OrgName, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -46,11 +48,14 @@ func getBoards(ctx context.Context) ([]Board, error) {
 func getBoardByID(ctx context.Context, id uuid.UUID) (*Board, error) {
 	var b Board
 	row := pool.QueryRow(ctx,
-		`select id, org_id, name, slug, description, is_active, settings, created_at, updated_at from boards where id=$1`,
+		`select b.id, b.org_id, o.name, b.name, b.slug, b.description, b.is_active, b.settings, b.created_at, b.updated_at
+		 from boards b
+		 join organizations o on o.id = b.org_id
+		 where b.id=$1`,
 		id,
 	)
 
-	if err := row.Scan(&b.ID, &b.OrgID, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt); err != nil {
+	if err := row.Scan(&b.ID, &b.OrgID, &b.OrgName, &b.Name, &b.Slug, &b.Description, &b.IsActive, &b.Settings, &b.CreatedAt, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
 
@@ -139,12 +144,12 @@ func getFeedbacksByBoardID(ctx context.Context, boardID uuid.UUID) ([]Feedback, 
 	return feedbacks, nil
 }
 
-func getFeedbackByID(ctx context.Context, id uuid.UUID) (*Feedback, error) {
+func getFeedbackByID(ctx context.Context, id uuid.UUID, boardID uuid.UUID) (*Feedback, error) {
 	var f Feedback
 	row := pool.QueryRow(ctx,
 		`select id, board_id, title, body, author_name, author_email, status, created_at, updated_at
-		 from feedbacks where id=$1`,
-		id,
+		 from feedbacks where id=$1 and board_id=$2`,
+		id, boardID,
 	)
 
 	if err := row.Scan(&f.ID, &f.BoardID, &f.Title, &f.Body, &f.AuthorName, &f.AuthorEmail, &f.Status, &f.CreatedAt, &f.UpdatedAt); err != nil {
@@ -154,14 +159,14 @@ func getFeedbackByID(ctx context.Context, id uuid.UUID) (*Feedback, error) {
 	return &f, nil
 }
 
-func updateFeedbackStatusForOrg(ctx context.Context, id uuid.UUID, orgID uuid.UUID, status string) (*Feedback, error) {
+func updateFeedbackStatusForOrg(ctx context.Context, id uuid.UUID, boardID uuid.UUID, orgID uuid.UUID, status string) (*Feedback, error) {
 	var f Feedback
 	row := pool.QueryRow(ctx,
 		`update feedbacks f set status=$1, updated_at=now()
 		 from boards b
-		 where f.id=$2 and f.board_id=b.id and b.org_id=$3
+		 where f.id=$2 and f.board_id=b.id and b.org_id=$3 and f.board_id=$4
 		 returning f.id, f.board_id, f.title, f.body, f.author_name, f.author_email, f.status, f.created_at, f.updated_at`,
-		status, id, orgID,
+		status, id, orgID, boardID,
 	)
 
 	if err := row.Scan(&f.ID, &f.BoardID, &f.Title, &f.Body, &f.AuthorName, &f.AuthorEmail, &f.Status, &f.CreatedAt, &f.UpdatedAt); err != nil {
@@ -171,12 +176,12 @@ func updateFeedbackStatusForOrg(ctx context.Context, id uuid.UUID, orgID uuid.UU
 	return &f, nil
 }
 
-func deleteFeedbackForOrg(ctx context.Context, id uuid.UUID, orgID uuid.UUID) error {
+func deleteFeedbackForOrg(ctx context.Context, id uuid.UUID, boardID uuid.UUID, orgID uuid.UUID) error {
 	result, err := pool.Exec(ctx,
 		`delete from feedbacks f
 		 using boards b
-		 where f.id=$1 and f.board_id=b.id and b.org_id=$2`,
-		id, orgID,
+		 where f.id=$1 and f.board_id=b.id and b.org_id=$2 and f.board_id=$3`,
+		id, orgID, boardID,
 	)
 	if err != nil {
 		return err

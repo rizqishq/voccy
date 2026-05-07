@@ -17,6 +17,7 @@ type BoardSettings struct {
 type Board struct {
 	ID          uuid.UUID     `json:"id"`
 	OrgID       uuid.UUID     `json:"org_id"`
+	OrgName     string        `json:"-"`
 	Name        string        `json:"name"`
 	Slug        string        `json:"slug"`
 	Description string        `json:"description"`
@@ -28,6 +29,7 @@ type Board struct {
 
 type PublicBoard struct {
 	ID          uuid.UUID     `json:"id"`
+	OrgName     string        `json:"org_name"`
 	Name        string        `json:"name"`
 	Slug        string        `json:"slug"`
 	Description string        `json:"description"`
@@ -40,6 +42,7 @@ type PublicBoard struct {
 func toPublicBoard(board Board) PublicBoard {
 	return PublicBoard{
 		ID:          board.ID,
+		OrgName:     board.OrgName,
 		Name:        board.Name,
 		Slug:        board.Slug,
 		Description: board.Description,
